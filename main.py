@@ -5,9 +5,13 @@ from time import sleep
 import subprocess
 import timeout
 import atexit
+from RPi import GPIO
+
+GPIO.setmode(GPIO.BOARD)
 
 def killall():
     subprocess.call("killall dsreader",shell=True)
+    GPIO.cleanup()
 
 atexit.register(killall)
 
@@ -37,9 +41,10 @@ args=parser.parse_args()
 
 #SETUP
 
-gpio_imported=False
 motion_pin=None
 gpio_pin=True
+
+currently_recycle=0
 
 camera_in_use=0
 
@@ -56,8 +61,6 @@ elif args.camera:
     camera_in_use+=1
 elif args.pir:
     verbose_print("Motion: Use PIR Motion Detector, PIN: "+str(args.pir))
-    import RPi.GPIO as GPIO
-    GPIO.setmode(GPIO.BOARD)
     motion_pin=args.pir
     GPIO.setup(motion_pin, GPIO.IN)
     gpio_imported=True
@@ -73,6 +76,10 @@ elif args.NoneRand:
 elif args.dsreader:
     verbose_print("Object Identification: Use dsreader with video0")
     camera_in_use+=1
+    import re
+    with open("/home/pi/RecycloTrash/database.txt") as f:
+        database=filter(None,f.read().split("\n"))
+        print database
 elif args.image:
     verbose_print("Object Identification: Take photo to find QR/Barcode")
     camera_in_use+=1
@@ -91,18 +98,16 @@ if args.NoServo:
     verbose_print("Trash movement: None")
 elif args.gpio:
     verbose_print("Trash movement: Use Servo, PIN: " + str(args.gpio))
-    if not gpio_imported:
-        import RPi.GPIO as GPIO
-        GPIO.setmode(GPIO.BOARD)
     servo_pin=args.gpio
     GPIO.setup(servo_pin, GPIO.OUT)
+    pwm=GPIO.PWM(servo_pin,50)
     gpio_imported=True
 else:
     raise ValueError("No Trash Movement Value")
 
 #Post-Init
 
-if not camera_in_use>1:
+if args.dsreader and not camera_in_use>1:
     from subprocess import Popen, PIPE
     from fcntl import fcntl, F_GETFL, F_SETFL
     from os import O_NONBLOCK, read
@@ -111,6 +116,7 @@ if not camera_in_use>1:
     fcntl(p.stdout, F_SETFL, flags | O_NONBLOCK)    
     
 while 1:
+    currently_recycle=0
     if args.pir:
         verbose_print("Motion: Start PIR")
 #        while GPIO.input(motion_pin):            sleep(0.3)
@@ -128,13 +134,46 @@ while 1:
         if not camera_in_use>1:
             try:
                 verbose_print("Datasymbol: Begin search")
-                sleep(10)
+                sleep(5)
                 raw_dsreader_input=read(p.stdout.fileno(), 1024)
                 verbose_print(raw_dsreader_input)
             except OSError:
                 raw_dsreader_input=""
                 verbose_print("Datasymbol: No datasymbol")
-            #qr=raw_dsreader_input.split
+            for raw_input in raw_dsreader_input.split("\n"):
+                if raw_input=="":
+                    continue
+                qr=raw_input.split(" ")
+                qr=" ".join(qr[2:-2])
+                qr=qr.replace("*",".")
+                regex = re.compile(qr)
+                matches = [string for string in database if re.match(regex, string)]
+                if len(matches)>0:
+                    currently_recycle=1
+                    verbose_print("Datasymbol: Match found")
+                else:
+                    verbose_print("Datasymbol: No match found")
+    if args.gpio:
+        if currently_recycle == 1:
+            verbose_print("Servo: Recycle")
+            pwm.start(12.5)
+            sleep(0.5)
+            
+        elif currently_recycle == 0:
+            verbose_print("Servo: Trash")
+            pwm.start(2.5)
+            sleep(0.5)
+            
+        pwm.ChangeDutyCycle(7.5)
+        sleep(0.5)
+        
+            
+    
+
     sleep(3)
-    read(p.stdout.fileno(), 1024)
+    try:
+        read(p.stdout.fileno(), 1024)
+    except OSError:
+        pass
+    
     print("="*20)
