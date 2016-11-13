@@ -91,6 +91,10 @@ if args.NoCV:
 elif args.googlevision:
     verbose_print("Computer Vision: Use Google Vision")
     camera_in_use+=1
+    import imp
+    googlevision=imp.load_source("googlevision","/home/pi/RecycloTrash/googlevision.py")
+    with open("/home/pi/RecycloTrash/database2.txt") as f:
+        database2=filter(None,f.read().split("\n"))
 else:
     raise ValueError("No Object Identification Value")
 
@@ -152,7 +156,17 @@ while 1:
                     currently_recycle=1
                     verbose_print("Datasymbol: Match found")
                 else:
-                    verbose_print("Datasymbol: No match found")
+                    verbose_print("Datasymbol: No match found") 
+    if args.googlevision:
+        verbose_print("Googlevision: Sending photo")
+        result=googlevision.main()
+        verbose_print(result)
+        for r in result:
+             if r in database2:
+                 verbose_print("Googlevision: Match found - "+r)
+                 currently_recycle=1
+                 break
+
     if args.gpio:
         if currently_recycle == 1:
             verbose_print("Servo: Recycle")
@@ -172,7 +186,8 @@ while 1:
 
     sleep(3)
     try:
-        read(p.stdout.fileno(), 1024)
+        if args.dsreader:
+            read(p.stdout.fileno(), 1024)
     except OSError:
         pass
     
